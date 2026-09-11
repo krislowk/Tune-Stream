@@ -2,13 +2,27 @@ package com.music.spotui.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-val Purple80 = Color(0xFFD0BCFF)
-val PurpleGrey80 = Color(0xFFCCC2DC)
-val Pink80 = Color(0xFFEFB8C8)
+// Primary — Tune Stream purple
+val TunePurple       = Color(0xFF9D4EDD)
+val TunePurpleLight  = Color(0xFFB47AEA)
+val TunePurpleDim    = Color(0xFF7B2CBF)
 
-val Purple40 = Color(0xFF6650a4)
-val PurpleGrey40 = Color(0xFF625b71)
-val Pink40 = Color(0xFF7D5260)
-val AppBackground = Color(0xFF0B0B0F)
-val GridBackground = Color(0xFF2A2A2A)
-val AppPalette = Color(0xFF618DFF)
+// Secondary — teal accent
+val TuneTeal         = Color(0xFF00D9C0)
+val TuneTealLight    = Color(0xFF4DE8D4)
+val TuneTealDim      = Color(0xFF00A896)
+
+// Backgrounds
+val TuneBlack        = Color(0xFF0A0A0F)
+val TuneSurface      = Color(0xFF15151C)
+val TuneSurfaceAlt   = Color(0xFF1E1E2A)
+val TuneOutline      = Color(0xFF2A2A38)
+
+// Text
+val TuneText         = Color(0xFFF5F5FA)
+val TuneTextMuted    = Color(0xFF9A9AA8)
+val TuneTextDim      = Color(0xFF6A6A78)
+
+// Status
+val TuneError        = Color(0xFFEF476F)
+val TuneSuccess      = Color(0xFF00D9C0)
