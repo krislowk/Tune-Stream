@@ -6,38 +6,71 @@ import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
-import com.music.spotui.R
 
-/**
- * The genuine Spotify fonts, extracted from the official app.
- * SpotifyMixUI — body / UI text. SpotifyMixUITitle — headings (heavier display cut).
- * Medium/SemiBold don't exist as cuts, so they map to the nearest available weight.
- */
-val SpotifyMix = FontFamily(
-    Font(R.font.spotify_mix_ui_regular, weight = FontWeight.Normal),
-    Font(R.font.spotify_mix_ui_regular, weight = FontWeight.Medium),
-    Font(R.font.spotify_mix_ui_bold, weight = FontWeight.SemiBold),
-    Font(R.font.spotify_mix_ui_bold, weight = FontWeight.Bold),
-)
-
-val SpotifyMixTitle = FontFamily(
-    Font(R.font.spotify_mix_ui_title_bold, weight = FontWeight.Bold),
-    Font(R.font.spotify_mix_ui_title_extrabold, weight = FontWeight.Black),
-)
-
-// Kept as an alias so existing references (Theme.kt etc.) don't break.
-val Montserrat = SpotifyMix
-
-private val base = TextStyle(fontFamily = SpotifyMix)
-private val title = TextStyle(fontFamily = SpotifyMixTitle, fontWeight = FontWeight.Bold)
-
-val Typography = Typography(
-    displayLarge = title, displayMedium = title, displaySmall = title,
-    headlineLarge = title, headlineMedium = title, headlineSmall = title,
-    titleLarge = base.copy(fontWeight = FontWeight.Bold),
-    titleMedium = base.copy(fontWeight = FontWeight.Bold),
-    titleSmall = base.copy(fontWeight = FontWeight.Bold),
-    bodyLarge = base.copy(fontSize = 16.sp, lineHeight = 24.sp),
-    bodyMedium = base, bodySmall = base,
-    labelLarge = base, labelMedium = base, labelSmall = base,
+val TuneStreamTypography = Typography(
+    displayLarge = TextStyle(
+        fontWeight = FontWeight.Bold,
+        fontSize = 48.sp,
+        lineHeight = 56.sp,
+        letterSpacing = (-0.5).sp
+    ),
+    displayMedium = TextStyle(
+        fontWeight = FontWeight.Bold,
+        fontSize = 38.sp,
+        lineHeight = 46.sp,
+        letterSpacing = (-0.25).sp
+    ),
+    headlineLarge = TextStyle(
+        fontWeight = FontWeight.Bold,
+        fontSize = 30.sp,
+        lineHeight = 38.sp
+    ),
+    headlineMedium = TextStyle(
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 24.sp,
+        lineHeight = 32.sp
+    ),
+    titleLarge = TextStyle(
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 20.sp,
+        lineHeight = 28.sp
+    ),
+    titleMedium = TextStyle(
+        fontWeight = FontWeight.Medium,
+        fontSize = 16.sp,
+        lineHeight = 24.sp
+    ),
+    bodyLarge = TextStyle(
+        fontWeight = FontWeight.Normal,
+        fontSize = 16.sp,
+        lineHeight = 24.sp
+    ),
+    bodyMedium = TextStyle(
+        fontWeight = FontWeight.Normal,
+        fontSize = 14.sp,
+        lineHeight = 20.sp
+    ),
+    bodySmall = TextStyle(
+        fontWeight = FontWeight.Normal,
+        fontSize = 12.sp,
+        lineHeight = 16.sp
+    ),
+    labelLarge = TextStyle(
+        fontWeight = FontWeight.Medium,
+        fontSize = 14.sp,
+        lineHeight = 20.sp,
+        letterSpacing = 0.1.sp
+    ),
+    labelMedium = TextStyle(
+        fontWeight = FontWeight.Medium,
+        fontSize = 12.sp,
+        lineHeight = 16.sp,
+        letterSpacing = 0.5.sp
+    ),
+    labelSmall = TextStyle(
+        fontWeight = FontWeight.Medium,
+        fontSize = 10.sp,
+        lineHeight = 14.sp,
+        letterSpacing = 0.5.sp
+    )
 )
