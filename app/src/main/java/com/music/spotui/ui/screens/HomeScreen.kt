@@ -3,14 +3,13 @@ package com.music.spotui.ui.screens
 import android.os.Build
 import android.util.Log
 import androidx.annotation.RequiresApi
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -32,8 +31,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -41,12 +42,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -55,6 +56,7 @@ import com.bumptech.glide.integration.compose.ExperimentalGlideComposeApi
 import com.bumptech.glide.integration.compose.GlideImage
 import com.bumptech.glide.integration.compose.placeholder
 import com.music.spotui.R
+import com.music.spotui.data.api.ProfileCache
 import com.music.spotui.data.api.Response
 import com.music.spotui.data.entity.AlbumsModel
 import com.music.spotui.data.entity.ArtistsModel
@@ -66,18 +68,14 @@ import com.music.spotui.ui.navigation.Routes
 import com.music.spotui.ui.navigation.albumRoute
 import com.music.spotui.ui.navigation.artistRoute
 import com.music.spotui.ui.navigation.playlistRoute
-import com.music.spotui.ui.theme.AppBackground
-import com.music.spotui.ui.theme.AppPalette
-import com.music.spotui.ui.theme.GridBackground
 import com.music.spotui.ui.viewmodel.HomeViewModel
 import java.time.LocalTime
 
-
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
-fun HomeScreen(navController: NavController){
+fun HomeScreen(navController: NavController) {
 
-    val homeViewModel : HomeViewModel = hiltViewModel()
+    val homeViewModel: HomeViewModel = hiltViewModel()
     val home by homeViewModel.home.collectAsState()
     val albums by homeViewModel.albums.collectAsState()
     val artists by homeViewModel.artists.collectAsState()
@@ -85,41 +83,30 @@ fun HomeScreen(navController: NavController){
     Surface(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(AppBackground.toArgb()))
-            .statusBarsPadding()
+            .statusBarsPadding(),
+        color = MaterialTheme.colorScheme.background
     ) {
         val feed = (home as? Response.Success)?.data
-        // Each feed resolves independently — albums (new releases) often succeeds
-        // while artists (personalized) gets rate-limited. Render whatever arrived
-        // instead of casting blindly (which crashed when one feed was an Error).
         val albumsList = (albums as? Response.Success)?.data.orEmpty()
         val artistsList = (artists as? Response.Success)?.data.orEmpty()
 
         when {
-            // Preferred: the real personalized Spotify home feed.
             feed != null && feed.sections.isNotEmpty() -> {
                 HomeFeedContent(navController, feed)
             }
-
-            // Still resolving the real personalized home feed. Show the loader even
-            // if the new-releases/artists fallbacks already arrived from cache —
-            // otherwise the old "Sum up" layout flashes for a beat before the real
-            // Spotify-style feed swaps in.
-            home is Response.Loading -> {
-                Loader()
-            }
-
-            // Fallback: home feed errored but new-releases / artists came through.
+            home is Response.Loading -> Loader()
             albumsList.isNotEmpty() || artistsList.isNotEmpty() -> {
-                SumUpHomeScreen(navController = navController, albums = albumsList, artists = artistsList)
+                SumUpHomeScreen(navController, albumsList, artistsList)
             }
-
             else -> {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
                     Text(
                         text = "Couldn't load music.\nCheck your connection and try again.",
-                        color = Color.White,
-                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        textAlign = TextAlign.Center
                     )
                 }
             }
@@ -131,21 +118,19 @@ private fun onHomeItemClick(navController: NavController, item: HomeItem) {
     when (item) {
         is HomeItem.Album -> navController.navigate(albumRoute(item.name, item.artists.ifBlank { item.subtitle }))
         is HomeItem.Artist -> navController.navigate(artistRoute(item.name, item.id))
-        // Load the real playlist content by its Spotify id (daily mixes, etc).
         is HomeItem.Playlist ->
             if (item.id.isNotBlank()) navController.navigate(playlistRoute(item.id, item.name))
             else navController.navigate(albumRoute(item.name))
     }
 }
 
+/* ------------------------------------------------------------------ */
+/*  Personalized Spotify feed — restyled in Tune Stream               */
+/* ------------------------------------------------------------------ */
+
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun HomeFeedContent(navController: NavController, feed: HomeFeedModel) {
-    // Mirror open.spotify.com exactly: sections render in the order the feed
-    // returns them. The 2-column "shortcuts" grid is only used for the UNTITLED
-    // section the web home starts with — if the feed leads with a titled section
-    // ("Jump back in", "Made For …"), it renders as a titled carousel first,
-    // not force-squeezed into the grid.
     val sections = feed.sections
     val gridSection = sections.firstOrNull()?.takeIf { it.title.isBlank() }
     val carousels = if (gridSection != null) sections.drop(1) else sections
@@ -154,142 +139,144 @@ fun HomeFeedContent(navController: NavController, feed: HomeFeedModel) {
         contentPadding = PaddingValues(bottom = 130.dp),
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(AppBackground.toArgb()))
+            .background(MaterialTheme.colorScheme.background)
     ) {
-        item {
-            HomeHeaderRow(navController)
-        }
+        item { TuneStreamGreeting(navController) }
         gridSection?.let { section ->
-            item {
-                HomeShortcutGrid(navController, section.items.take(8))
-            }
+            item { TuneStreamShortcutGrid(navController, section.items.take(8)) }
         }
         items(carousels.size) { i ->
-            HomeFeedSection(navController, carousels[i])
+            TuneStreamSection(navController, carousels[i])
         }
     }
 }
 
-/** Spotify-style top row: profile avatar on the left (opens Settings, like the
- *  official app's profile drawer), then the filter pills — one single row. */
+/** Tune Stream header: greeting on the left, avatar on the right. */
 @OptIn(ExperimentalGlideComposeApi::class)
 @Composable
-private fun HomeHeaderRow(navController: NavController) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    androidx.compose.runtime.LaunchedEffect(Unit) {
-        com.music.spotui.data.api.ProfileCache.ensure(context)
+private fun TuneStreamGreeting(navController: NavController) {
+    val context = LocalContext.current
+    LaunchedEffect(Unit) { ProfileCache.ensure(context) }
+
+    val hour = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) LocalTime.now().hour else 12
+    val greeting = when {
+        hour < 12 -> "Good morning"
+        hour < 17 -> "Good afternoon"
+        else -> "Good evening"
     }
+
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 26.dp, bottom = 8.dp),
+            .padding(start = 20.dp, end = 20.dp, top = 24.dp, bottom = 8.dp)
     ) {
-        val avatarUrl = com.music.spotui.data.api.ProfileCache.imageUrl
-        val initial = com.music.spotui.data.api.ProfileCache.name
-            ?.trim()?.firstOrNull()?.uppercase() ?: "•"
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "TUNE STREAM",
+                color = MaterialTheme.colorScheme.secondary,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 2.sp
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = greeting,
+                color = MaterialTheme.colorScheme.onBackground,
+                fontSize = 26.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "Ready to press play?",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 13.sp
+            )
+        }
+
+        val avatarUrl = ProfileCache.imageUrl
+        val initial = ProfileCache.name?.trim()?.firstOrNull()?.uppercase() ?: "T"
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
-                .padding(start = 16.dp)
-                .size(34.dp)
+                .size(44.dp)
                 .clip(CircleShape)
-                .background(Color(0xFFE8622C))
+                .background(
+                    Brush.linearGradient(
+                        listOf(
+                            MaterialTheme.colorScheme.primary,
+                            MaterialTheme.colorScheme.secondary
+                        )
+                    )
+                )
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                ) { navController.navigate(Routes.Settings.route) },
+                    indication = null
+                ) { navController.navigate(Routes.Settings.route) }
         ) {
             if (avatarUrl != null) {
                 GlideImage(
                     model = avatarUrl,
                     contentScale = ContentScale.Crop,
                     contentDescription = "Profile",
-                    modifier = Modifier.size(34.dp),
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
                 )
             } else {
                 Text(
                     text = initial,
-                    color = Color.Black,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold
                 )
-            }
-        }
-        // Filter pills — Podcasts/Audiobooks jump to Search (where they're indexed).
-        val filters = listOf("All", "Music", "Podcasts", "Audiobooks")
-        var selected by remember { androidx.compose.runtime.mutableStateOf("All") }
-        LazyRow(
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.weight(1f),
-        ) {
-            items(filters.size) { i ->
-                val label = filters[i]
-                val isSel = label == selected
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(50))
-                        .background(if (isSel) Color(0xFF1ED760) else Color(0xFF2A2A2A))
-                        .clickable {
-                            selected = label
-                            if (label == "Podcasts" || label == "Audiobooks") {
-                                navController.navigate(Routes.Search.route)
-                            }
-                        }
-                        .padding(horizontal = 14.dp, vertical = 6.dp),
-                ) {
-                    Text(
-                        text = label,
-                        color = if (isSel) Color.Black else Color.White,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium,
-                    )
-                }
             }
         }
     }
 }
 
+/** 2-column shortcut grid — rounded tiles, teal-tinted surface. */
 @OptIn(ExperimentalGlideComposeApi::class)
 @Composable
-private fun HomeShortcutGrid(navController: NavController, items: List<HomeItem>) {
-    Column(modifier = Modifier.padding(8.dp, 4.dp)) {
+private fun TuneStreamShortcutGrid(navController: NavController, items: List<HomeItem>) {
+    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
         items.chunked(2).forEach { rowItems ->
             Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(8.dp, 4.dp),
+                    .padding(vertical = 4.dp)
             ) {
                 rowItems.forEach { item ->
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
                             .weight(1f)
-                            .height(48.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(Color(GridBackground.toArgb()))
+                            .height(56.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
-                                indication = null,
-                            ) { onHomeItemClick(navController, item) },
+                                indication = null
+                            ) { onHomeItemClick(navController, item) }
                     ) {
                         GlideImage(
-                            modifier = Modifier.size(48.dp),
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(RoundedCornerShape(topStart = 14.dp, bottomStart = 14.dp)),
                             contentScale = ContentScale.Crop,
                             model = item.imageUrl,
                             loading = placeholder(R.drawable.placeholder),
                             failure = placeholder(R.drawable.placeholder),
-                            contentDescription = "",
+                            contentDescription = ""
                         )
                         Text(
                             text = item.name,
-                            color = Color.White,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
                             maxLines = 2,
-                            modifier = Modifier.padding(8.dp, 4.dp),
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(horizontal = 10.dp)
                         )
                     }
                 }
@@ -299,319 +286,269 @@ private fun HomeShortcutGrid(navController: NavController, items: List<HomeItem>
     }
 }
 
+/** Section header + horizontal carousel. */
 @Composable
-private fun HomeFeedSection(navController: NavController, section: HomeSection) {
-    Text(
-        text = section.title,
-        color = Color.White,
-        fontSize = 21.sp,
-        fontWeight = FontWeight.Bold,
-        modifier = Modifier.padding(16.dp, 20.dp, 16.dp, 4.dp),
-    )
-    LazyRow(contentPadding = androidx.compose.foundation.layout.PaddingValues(10.dp, 0.dp)) {
-        items(section.items.size) { i ->
-            HomeFeedCard(section.items[i]) { onHomeItemClick(navController, section.items[i]) }
+private fun TuneStreamSection(navController: NavController, section: HomeSection) {
+    Column(modifier = Modifier.padding(top = 20.dp)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 4.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(4.dp)
+                    .height(18.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(MaterialTheme.colorScheme.secondary)
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = section.title,
+                color = MaterialTheme.colorScheme.onBackground,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            items(section.items.size) { i ->
+                TuneStreamCard(section.items[i]) {
+                    onHomeItemClick(navController, section.items[i])
+                }
+            }
         }
     }
 }
 
 @OptIn(ExperimentalGlideComposeApi::class)
 @Composable
-private fun HomeFeedCard(item: HomeItem, onClick: () -> Unit) {
+private fun TuneStreamCard(item: HomeItem, onClick: () -> Unit) {
     val isArtist = item is HomeItem.Artist
     val subtitle = when (item) {
         is HomeItem.Album -> item.subtitle
         is HomeItem.Playlist -> item.subtitle
         is HomeItem.Artist -> "Artist"
     }
+
     Column(
         horizontalAlignment = if (isArtist) Alignment.CenterHorizontally else Alignment.Start,
         modifier = Modifier
-            .width(150.dp)
-            .padding(6.dp)
+            .width(148.dp)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-            ) { onClick() },
+                indication = null
+            ) { onClick() }
     ) {
-        GlideImage(
+        Box(
             modifier = Modifier
-                .size(150.dp)
-                .clip(if (isArtist) CircleShape else RoundedCornerShape(8.dp)),
-            contentScale = ContentScale.Crop,
-            model = item.imageUrl,
-            loading = placeholder(R.drawable.placeholder),
-            failure = placeholder(R.drawable.placeholder),
-            contentDescription = "",
-        )
-        Spacer(modifier = Modifier.height(6.dp))
+                .size(148.dp)
+                .clip(if (isArtist) CircleShape else RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.surface)
+        ) {
+            GlideImage(
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+                model = item.imageUrl,
+                loading = placeholder(R.drawable.placeholder),
+                failure = placeholder(R.drawable.placeholder),
+                contentDescription = ""
+            )
+        }
+        Spacer(Modifier.height(8.dp))
         Text(
             text = item.name,
-            color = Color.White,
-            fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontSize = 14.sp,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
-            textAlign = if (isArtist) TextAlign.Center else TextAlign.Start,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = if (isArtist) TextAlign.Center else TextAlign.Start
         )
         Text(
             text = subtitle,
-            color = Color(0xFFB3B3B3),
-            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 12.sp,
             maxLines = 2,
-            textAlign = if (isArtist) TextAlign.Center else TextAlign.Start,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = if (isArtist) TextAlign.Center else TextAlign.Start
         )
     }
 }
 
+/* ------------------------------------------------------------------ */
+/*  Fallback feed — restyled                                          */
+/* ------------------------------------------------------------------ */
+
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
-fun SumUpHomeScreen(navController : NavController, albums: List<AlbumsModel>, artists: List<ArtistsModel>) {
+fun SumUpHomeScreen(
+    navController: NavController,
+    albums: List<AlbumsModel>,
+    artists: List<ArtistsModel>
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .background(Color(AppBackground.toArgb()))
-    ){
-
-        GreetingSection()
-        //ChipSection(chip = listOf(" All ", "Music", "Podcasts"))
+            .background(MaterialTheme.colorScheme.background)
+    ) {
+        TuneStreamGreeting(navController)
 
         if (albums.isNotEmpty()) {
             HomePlaylistGrid(navController, albums)
-            HomeAlbums(album = albums, navController)
+            HomeAlbums(album = albums, navController = navController)
         }
-        //HomeRecentlyPlayed(navController, albums = listOf("karan aujla", "diljit", "fudfu", "frref", "frrf"))
         if (artists.isNotEmpty()) {
-            HomeArtists(artists = artists, navController)
+            HomeArtists(artists = artists, navController = navController)
         }
         if (albums.isNotEmpty()) {
             ImageCard(navController, albums)
         }
+        Spacer(Modifier.height(40.dp))
     }
 }
 
-
-
-@RequiresApi(Build.VERSION_CODES.O)
 @Composable
-fun GreetingSection(name : String = "User") {
-    val currentHour = LocalTime.now().hour
-    val greeting = when {
-        currentHour < 12 -> "Good Morning"
-        currentHour < 17 -> "Good Afternoon"
-        else -> "Good Evening"
-    }
+private fun SectionHeader(text: String) {
     Row(
-        horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(16.dp)
+        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 18.dp, bottom = 4.dp)
     ) {
-        Column(verticalArrangement = Arrangement.Center) {
-            Text(
-                text = greeting,
-                style = MaterialTheme.typography.headlineSmall,
-                color = Color.White,
-                fontSize = 22.sp,
-                fontWeight = FontWeight.Bold
-                )
-            Text(
-                text = "Have a Nice Day",
-                style = MaterialTheme.typography.bodyMedium,
-                color = Color.White,
-                fontSize = 13.sp
-                )
-        }
-//        Icon(imageVector = Icons.Outlined.Person, contentDescription = "Profile", tint = Color.White)
+        Box(
+            modifier = Modifier
+                .width(4.dp)
+                .height(18.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(MaterialTheme.colorScheme.secondary)
+        )
+        Spacer(Modifier.width(10.dp))
+        Text(
+            text = text,
+            color = MaterialTheme.colorScheme.onBackground,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold
+        )
     }
 }
-
-//@Composable
-//fun ChipSection(
-//    chip : List<String>
-//) {
-//    var selectedChip by remember {
-//        mutableStateOf(0)
-//    }
-//    LazyRow{
-//        items(chip.size){
-//            Box(contentAlignment = Alignment.Center,
-//                modifier = Modifier
-//                    .padding(15.dp, 0.dp, 0.dp, 0.dp)
-//                    .clickable {
-//                        selectedChip = it
-//                    }
-//                    .clip(RoundedCornerShape(50.dp))
-//                    .background(
-//                        if (selectedChip == it) Color.Green
-//                        else Color.Gray
-//                    )
-//                    .padding(10.dp, 5.dp)
-//
-//            ){
-//                Text(text = chip[it], color = Color.White)
-//            }
-//        }
-//    }
-//}
 
 @OptIn(ExperimentalGlideComposeApi::class)
 @Composable
 fun HomePlaylistGrid(navController: NavController, albums: List<AlbumsModel>) {
-    // Use up to 8 albums, but don't assume there are at least 8 (rate-limited /
-    // small feeds can return fewer) — that previously caused IndexOutOfBounds.
     val gridAlbums = albums.take(8)
-
     val chunkedAlbums = gridAlbums.chunked(2)
-    Log.d("giveme", chunkedAlbums.toString())
-    Column(
-        modifier = Modifier
-            .padding(0.dp, 10.dp)
-    ){
-        repeat(chunkedAlbums.size){
-            Row(verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
+
+    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
+        repeat(chunkedAlbums.size) { rowIndex ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier
-                    .padding(15.dp, 5.dp, 7.dp, 0.dp)
                     .fillMaxWidth()
-            )
-            {
-                repeat(chunkedAlbums[it].size){ album ->
+                    .padding(vertical = 4.dp)
+            ) {
+                repeat(chunkedAlbums[rowIndex].size) { albumIndex ->
+                    val album = chunkedAlbums[rowIndex][albumIndex]
                     Row(
                         horizontalArrangement = Arrangement.Start,
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
-                            .padding(2.dp)
-                            .clip(RoundedCornerShape(5.dp))
-                            .background(Color(GridBackground.toArgb()))
-                            .width(180.dp)
+                            .weight(1f)
+                            .height(56.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null
                             ) {
-                                val albumModel = chunkedAlbums[it][album]
-                                Log.d("check", albumModel.name)
-                                navController.navigate(albumRoute(albumModel.name, albumModel.artists))
+                                navController.navigate(albumRoute(album.name, album.artists))
                             }
                     ) {
-                        GlideImage(modifier = Modifier
-                            .size(55.dp),
+                        GlideImage(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(RoundedCornerShape(topStart = 14.dp, bottomStart = 14.dp)),
                             contentScale = ContentScale.Crop,
-                            model = chunkedAlbums[it][album].coverUri,
+                            model = album.coverUri,
                             loading = placeholder(R.drawable.placeholder),
                             failure = placeholder(R.drawable.placeholder),
-                            contentDescription = "Profile")
-                        Text(modifier = Modifier.padding(5.dp),
-                            text = chunkedAlbums[it][album].name,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
+                            contentDescription = album.name
                         )
-
+                        Text(
+                            modifier = Modifier.padding(horizontal = 10.dp),
+                            text = album.name,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
-
+                if (chunkedAlbums[rowIndex].size == 1) {
+                    Spacer(modifier = Modifier.weight(1f))
+                }
             }
         }
     }
 }
 
-
 @OptIn(ExperimentalGlideComposeApi::class)
 @Composable
-fun HomeAlbums(
-    album : List<AlbumsModel>,
-    navController: NavController
-) {
+fun HomeAlbums(album: List<AlbumsModel>, navController: NavController) {
     val reversedAlbum = album.reversed().dropLast(1)
-    Text(modifier = Modifier
-        .padding(20.dp, 10.dp, 0.dp, 0.dp),
-        text = "Albums",
-        color = Color.White,
-            fontSize = 22.sp,
-            fontWeight = FontWeight.Bold)
-        LazyRow(modifier = Modifier.padding(6.dp)){
-            items(reversedAlbum.size){ album ->
-                Box(modifier = Modifier
-                    .padding(10.dp)
-                    .width(150.dp)
-                    .height(195.dp)
+    if (reversedAlbum.isEmpty()) return
+
+    SectionHeader("New releases")
+    LazyRow(
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        items(reversedAlbum.size) { i ->
+            val a = reversedAlbum[i]
+            Column(
+                modifier = Modifier
+                    .width(148.dp)
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
-                    ) {
-                        navController.navigate(albumRoute(reversedAlbum[album].name, reversedAlbum[album].artists))
-                    }
-            ){
-                Column(
-                    horizontalAlignment = Alignment.Start,
-                    ) {
-
-                    GlideImage(modifier = Modifier
-                        .size(150.dp),
+                    ) { navController.navigate(albumRoute(a.name, a.artists)) }
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(148.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(MaterialTheme.colorScheme.surface)
+                ) {
+                    GlideImage(
+                        modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop,
-                        model = reversedAlbum[album].coverUri,
+                        model = a.coverUri,
                         loading = placeholder(R.drawable.placeholder),
                         failure = placeholder(R.drawable.placeholder),
-                        contentDescription = "Albums")
-                    Text(
-                        fontSize = 13.sp,
-                        text = reversedAlbum[album].name,
-                        textAlign = TextAlign.Center,
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold)
-                    Text(
-                        fontSize = 12.sp,
-                        textAlign = TextAlign.Center,
-                        text = reversedAlbum[album].artists,
-                        color = Color.LightGray)
+                        contentDescription = "Album"
+                    )
                 }
-
-            }
-        }
-    }
-}
-
-@Composable
-fun HomeRecentlyPlayed(
-    navController: NavController,
-    albums : List<String>
-) {
-    Text(modifier = Modifier
-        .padding(20.dp, 10.dp, 0.dp, 0.dp),
-        text = "Recently Played",
-        color = Color.White,
-        fontSize = 23.sp,
-        fontWeight = FontWeight.Bold)
-    LazyRow(modifier = Modifier.padding(6.dp)){
-        items(albums.size){
-            Box(modifier = Modifier
-                .padding(10.dp)
-                .width(130.dp)
-                .height(140.dp)
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null
-                ) {
-                    navController.navigate(Routes.Player.route)
-                }
-            ){
-                Column(horizontalAlignment = Alignment.Start) {
-                    Image(modifier = Modifier
-                        .size(120.dp)
-                        .background(Color.Green),
-                        contentScale = ContentScale.Crop,
-                        painter = painterResource(id = R.drawable.album),
-                        contentDescription = "Albums")
-                    Text(modifier = Modifier.padding(2.dp),
-                        text = "Album name",
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp)
-                }
-
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    fontSize = 14.sp,
+                    text = a.name,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    fontSize = 12.sp,
+                    text = a.artists,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
     }
@@ -619,52 +556,59 @@ fun HomeRecentlyPlayed(
 
 @OptIn(ExperimentalGlideComposeApi::class)
 @Composable
-fun HomeArtists(
-    artists : List<ArtistsModel>,
-    navController: NavController
-) {
-    Text(modifier = Modifier
-        .padding(20.dp, 10.dp, 0.dp, 0.dp),
-        text = "Best of Artists",
-        color = Color.White,
-        fontSize = 23.sp,
-        fontWeight = FontWeight.Bold)
-    LazyRow(modifier = Modifier.padding(6.dp)){
-        items(artists.size){artist ->
-            Box(modifier = Modifier
-                .padding(10.dp)
-                .width(150.dp)
-                .height(200.dp)
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null
+fun HomeArtists(artists: List<ArtistsModel>, navController: NavController) {
+    if (artists.isEmpty()) return
+
+    SectionHeader("Artists you'll love")
+    LazyRow(
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        items(artists.size) { i ->
+            val a = artists[i]
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .width(140.dp)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { navController.navigate(artistRoute(a.name, a.id)) }
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(140.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surface)
                 ) {
-                    Log.d("check", artists[artist].name)
-                    navController.navigate(artistRoute(artists[artist].name, artists[artist].id))
-                }
-            ){
-                Column(horizontalAlignment = Alignment.Start) {
-
-
-
-                    GlideImage(modifier = Modifier
-                        .size(150.dp),
+                    GlideImage(
+                        modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop,
-                        model = artists[artist].coverUri,
+                        model = a.coverUri,
                         loading = placeholder(R.drawable.placeholder),
                         failure = placeholder(R.drawable.placeholder),
-                        contentDescription = "Albums")
-                    Text(modifier = Modifier.padding(2.dp),
-                        text = "This is ${artists[artist].name}",
-                        color = Color.LightGray,
-                        fontSize = 11.sp)
+                        contentDescription = "Artist"
+                    )
                 }
-
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = a.name,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center
+                )
+                Text(
+                    text = "Artist",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 12.sp
+                )
             }
         }
     }
 }
-
 
 @OptIn(ExperimentalGlideComposeApi::class)
 @Composable
@@ -673,42 +617,35 @@ fun ImageCard(
     allAlbums: List<AlbumsModel>,
     modifier: Modifier = Modifier
 ) {
-
     val albums = allAlbums.takeLast(3)
-    Text(modifier = Modifier
-        .padding(20.dp, 10.dp, 0.dp, 0.dp),
-        text = "Discover",
-        color = Color.White,
-        fontSize = 22.sp,
-        fontWeight = FontWeight.Bold)
-    Column(
-        modifier = Modifier.padding(0.dp, 10.dp, 0.dp, 50.dp)
-    ) {
-        repeat(albums.size) { album ->
+    if (albums.isEmpty()) return
+
+    SectionHeader("Discover")
+
+    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
+        albums.forEach { album ->
             Card(
-                shape = RoundedCornerShape(15.dp),
-                elevation = CardDefaults.cardElevation(
-                    defaultElevation = 5.dp
+                shape = RoundedCornerShape(20.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface
                 ),
                 modifier = Modifier
-                    .padding(15.dp)
+                    .padding(vertical = 8.dp)
                     .fillMaxWidth()
-                    .height(380.dp)
+                    .height(320.dp)
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
                     ) {
-                       navController.navigate(albumRoute(albums[album].name, albums[album].artists))
+                        navController.navigate(albumRoute(album.name, album.artists))
                     }
             ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                ) {
+                Box(modifier = Modifier.fillMaxSize()) {
                     GlideImage(
                         modifier = Modifier.fillMaxSize(),
-                        model = albums[album].coverUri,
-                        contentDescription = "artists",
+                        model = album.coverUri,
+                        contentDescription = album.name,
                         loading = placeholder(R.drawable.placeholder),
                         failure = placeholder(R.drawable.placeholder),
                         contentScale = ContentScale.Crop
@@ -720,49 +657,39 @@ fun ImageCard(
                                 Brush.verticalGradient(
                                     colors = listOf(
                                         Color.Transparent,
-                                        Color(AppBackground.toArgb())
+                                        Color.Black.copy(alpha = 0.75f)
                                     ),
-                                    startY = 150f
+                                    startY = 200f
                                 )
                             )
                     )
-                    Box(
+                    Column(
                         modifier = Modifier
-                            .fillMaxSize()
-                            .padding(0.dp, 0.dp, 0.dp, 30.dp),
-                        contentAlignment = Alignment.BottomCenter
+                            .align(Alignment.BottomStart)
+                            .padding(20.dp)
                     ) {
                         Text(
-                            text = "Album : ${albums[album].name}",
-                            style = TextStyle(color = Color.White, fontSize = 20.sp),
-                            textAlign = TextAlign.Center
+                            text = album.name,
+                            style = TextStyle(
+                                color = Color.White,
+                                fontSize = 22.sp,
+                                fontWeight = FontWeight.Bold
+                            ),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
                         )
-
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = album.artists,
+                            color = Color.White.copy(alpha = 0.75f),
+                            fontSize = 13.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
             }
         }
-        Spacer(modifier = Modifier.height(100.dp))
+        Spacer(Modifier.height(20.dp))
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
