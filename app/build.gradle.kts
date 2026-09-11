@@ -12,7 +12,7 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.music.spotui"
+        applicationId = "com.tunestream.app"
         minSdk = 26
         targetSdk = 34
         versionCode = 14
